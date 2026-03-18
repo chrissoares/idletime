@@ -22,12 +22,17 @@ class ActivityTrackerGUI:
         self.current_state = "active"
         self.current_session_id = None
         self.tray_icon = None
+        self.tray_thread = None
+        self.is_window_visible = True
+        self.last_state_change_time = datetime.now()
 
         self.setup_ui()
         self.monitor.start_monitoring()
         self.update_status()
         self.start_auto_refresh()
         self.root.bind("<Unmap>", self.on_minimize)
+        # Garantir ícone na bandeja desde o início
+        self.ensure_tray_icon()
         
     def setup_ui(self):
         notebook = ttk.Notebook(self.root)
@@ -142,11 +147,19 @@ class ActivityTrackerGUI:
         
         self.period_var = tk.StringVar(value="Hoje")
         period_combo = ttk.Combobox(filter_frame, textvariable=self.period_var, 
-                                     values=["Hoje", "Últimos 7 dias", "Últimos 30 dias", "Tudo"], 
+                                     values=["Hoje", "Ontem", "Últimos 7 dias", "Últimos 30 dias", "Tudo", "Personalizado"], 
                                      state='readonly', width=20)
         period_combo.grid(row=0, column=1, padx=5, pady=5)
         
         ttk.Button(filter_frame, text="Gerar Relatório", command=self.generate_report).grid(row=0, column=2, padx=5, pady=5)
+
+        ttk.Label(filter_frame, text="Início (AAAA-MM-DD)").grid(row=1, column=0, padx=5, pady=2, sticky='w')
+        self.custom_start_var = tk.StringVar()
+        ttk.Entry(filter_frame, textvariable=self.custom_start_var, width=18).grid(row=1, column=1, padx=5, pady=2, sticky='w')
+
+        ttk.Label(filter_frame, text="Fim (AAAA-MM-DD)").grid(row=2, column=0, padx=5, pady=2, sticky='w')
+        self.custom_end_var = tk.StringVar()
+        ttk.Entry(filter_frame, textvariable=self.custom_end_var, width=18).grid(row=2, column=1, padx=5, pady=2, sticky='w')
         
         stats_frame = ttk.LabelFrame(report_frame, text="Estatísticas", padding=10)
         stats_frame.pack(fill='both', expand=True, padx=10, pady=10)
@@ -185,6 +198,7 @@ class ActivityTrackerGUI:
     def on_state_change(self, state, session_id):
         self.current_state = state
         self.current_session_id = session_id
+        self.last_state_change_time = datetime.now()
         self.update_status()
         
         if state == 'idle':
@@ -194,12 +208,20 @@ class ActivityTrackerGUI:
     
     def update_status(self):
         if self.current_state == 'active':
-            self.status_label.config(text="Estado: 🟢 Ativo", foreground='green')
+            self.status_label.config(text="Estado: Ativo", foreground='green')
         else:
-            self.status_label.config(text="Estado: 🔴 Inativo", foreground='red')
+            self.status_label.config(text="Estado: Inativo", foreground='red')
         
         idle_time = int(self.monitor.get_idle_duration())
         self.idle_time_label.config(text=f"Tempo ocioso: {idle_time}s")
+
+        # Duração da sessão atual
+        if self.last_state_change_time:
+            elapsed = int((datetime.now() - self.last_state_change_time).total_seconds())
+            hours = elapsed // 3600
+            minutes = (elapsed % 3600) // 60
+            seconds = elapsed % 60
+            self.duration_label.config(text=f"Duração: {hours:02d}:{minutes:02d}:{seconds:02d}")
     
     def refresh_recent_sessions(self):
         for item in self.recent_tree.get_children():
@@ -274,12 +296,23 @@ class ActivityTrackerGUI:
         end_date = datetime.now()
         if period == "Hoje":
             start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+            end_date = start_date + timedelta(days=1)
+        elif period == "Ontem":
+            start_date = (end_date - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            end_date = start_date + timedelta(days=1)
         elif period == "Últimos 7 dias":
             start_date = end_date - timedelta(days=7)
         elif period == "Últimos 30 dias":
             start_date = end_date - timedelta(days=30)
-        else:
+        elif period == "Tudo":
             start_date = None
+        elif period == "Personalizado":
+            try:
+                start_date = datetime.strptime(self.custom_start_var.get(), '%Y-%m-%d')
+                end_date = datetime.strptime(self.custom_end_var.get(), '%Y-%m-%d') + timedelta(days=1)
+            except ValueError:
+                messagebox.showwarning("Datas inválidas", "Informe datas no formato AAAA-MM-DD para início e fim.")
+                return
         
         stats = self.database.get_statistics(start_date, end_date)
         
@@ -290,7 +323,7 @@ class ActivityTrackerGUI:
         report += f"{'='*70}\n\n"
         
         if start_date:
-            report += f"Período: {start_date.strftime('%d/%m/%Y')} a {end_date.strftime('%d/%m/%Y')}\n\n"
+            report += f"Período: {start_date.strftime('%d/%m/%Y')} a {(end_date - timedelta(seconds=1)).strftime('%d/%m/%Y')}\n\n"
         else:
             report += f"Período: Todo o histórico\n\n"
         
@@ -391,13 +424,21 @@ class ActivityTrackerGUI:
         winreg.CloseKey(key)
     
     def start_auto_refresh(self):
-        self.refresh_recent_sessions()
-        self.refresh_uncategorized()
+        self.refresh_all()
         self.root.after(5000, self.periodic_refresh)
     
     def periodic_refresh(self):
-        self.update_status()
+        if self.is_window_visible and self.root.state() == 'normal':
+            self.refresh_all()
+        else:
+            # Atualiza estado mínimo (por ex., cor do label) mas evita carregar listas
+            self.update_status()
         self.root.after(5000, self.periodic_refresh)
+
+    def refresh_all(self):
+        self.update_status()
+        self.refresh_recent_sessions()
+        self.refresh_uncategorized()
     
     def show_notification(self, title, message):
         pass
@@ -417,21 +458,22 @@ class ActivityTrackerGUI:
     def ensure_tray_icon(self):
         if not self.tray_icon:
             self.create_tray_icon()
-            threading.Thread(target=self.tray_icon.run, daemon=True).start()
-    
-    def show_window(self, icon=None, item=None):
+            # run_detached cria o loop interno; não precisa gerenciar thread manual
+            self.tray_icon.run_detached()
         if self.tray_icon:
-            try:
-                self.tray_icon.stop()
-            except Exception:
-                pass
-            self.tray_icon = None
+            self.tray_icon.visible = True
+        
+    def show_window(self, icon=None, item=None):
+        # restaurar a partir do ícone (duplo clique no default item)
         self.root.deiconify()
         self.root.lift()
         self.root.focus_force()
+        self.is_window_visible = True
+        self.refresh_all()
 
     def hide_window(self):
         self.root.withdraw()
+        self.is_window_visible = False
 
     def on_minimize(self, event):
         # Quando minimizar, esconder e ir para bandeja
@@ -440,7 +482,13 @@ class ActivityTrackerGUI:
             self.hide_window()
     
     def on_closing(self):
-        if messagebox.askokcancel("Sair", "Deseja minimizar para a bandeja ou sair completamente?\n\nOK = Minimizar para bandeja\nCancelar = Continuar usando"):
+        result = messagebox.askyesno(
+            "Sair",
+            "Fechar completamente?\n\nSim = encerrar e parar o monitoramento\nNão = continuar ativo na bandeja"
+        )
+        if result:
+            self.quit_app()
+        else:
             self.ensure_tray_icon()
             self.hide_window()
 
