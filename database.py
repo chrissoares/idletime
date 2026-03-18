@@ -1,11 +1,25 @@
 import sqlite3
 from datetime import datetime
 import os
+import sys
 
 class Database:
-    def __init__(self, db_path="activity_tracker.db"):
-        self.db_path = db_path
+    def __init__(self, db_path=None):
+        self.db_path = db_path or self.default_db_path()
+        self.ensure_db_folder()
         self.init_database()
+
+    def default_db_path(self):
+        base_dir = None
+        # Usar uma pasta gravável por usuário (evita problemas no autostart/exe)
+        base_dir = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        app_dir = os.path.join(base_dir, "TempoInativo")
+        return os.path.join(app_dir, "activity_tracker.db")
+
+    def ensure_db_folder(self):
+        folder = os.path.dirname(self.db_path)
+        if folder and not os.path.exists(folder):
+            os.makedirs(folder, exist_ok=True)
     
     def init_database(self):
         conn = sqlite3.connect(self.db_path)
