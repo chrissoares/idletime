@@ -67,6 +67,30 @@ class Database:
         
         conn.commit()
         conn.close()
+
+    def close_open_sessions(self):
+        """Fecha sessões sem end_time (ex.: após queda/reboot)."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        now = datetime.now()
+
+        cursor.execute('''
+            SELECT id, start_time FROM activity_sessions
+            WHERE end_time IS NULL
+        ''')
+        rows = cursor.fetchall()
+
+        for sid, start_time in rows:
+            start_dt = datetime.fromisoformat(start_time)
+            duration = int((now - start_dt).total_seconds())
+            cursor.execute('''
+                UPDATE activity_sessions
+                SET end_time = ?, duration_seconds = ?
+                WHERE id = ?
+            ''', (now, duration, sid))
+
+        conn.commit()
+        conn.close()
     
     def start_session(self, session_type='active'):
         conn = sqlite3.connect(self.db_path)

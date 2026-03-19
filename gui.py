@@ -17,6 +17,8 @@ class ActivityTrackerGUI:
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
         self.database = Database()
+        # Fecha sessões que ficaram abertas por desligamento/reboot
+        self.database.close_open_sessions()
         self.monitor = ActivityMonitor(idle_threshold=60, callback=self.on_state_change)
         
         self.current_state = "active"
@@ -224,6 +226,13 @@ class ActivityTrackerGUI:
             self.duration_label.config(text=f"Duração: {hours:02d}:{minutes:02d}:{seconds:02d}")
     
     def refresh_recent_sessions(self):
+        selected_id = None
+        sel = self.recent_tree.selection()
+        if sel:
+            try:
+                selected_id = self.recent_tree.item(sel[0]).get('values', [None])[0]
+            except Exception:
+                selected_id = None
         for item in self.recent_tree.get_children():
             self.recent_tree.delete(item)
         
@@ -246,9 +255,18 @@ class ActivityTrackerGUI:
             type_str = "Ativo" if stype == 'active' else "Inativo"
             category_str = category if category else ""
             
-            self.recent_tree.insert('', 'end', values=(sid, start_str, end_str, type_str, duration_str, category_str))
+            node = self.recent_tree.insert('', 'end', values=(sid, start_str, end_str, type_str, duration_str, category_str))
+            if selected_id is not None and sid == selected_id:
+                self.recent_tree.selection_set(node)
     
     def refresh_uncategorized(self):
+        selected_id = None
+        sel = self.uncategorized_tree.selection()
+        if sel:
+            try:
+                selected_id = self.uncategorized_tree.item(sel[0]).get('values', [None])[0]
+            except Exception:
+                selected_id = None
         for item in self.uncategorized_tree.get_children():
             self.uncategorized_tree.delete(item)
         
@@ -265,7 +283,9 @@ class ActivityTrackerGUI:
             seconds = duration % 60
             duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
             
-            self.uncategorized_tree.insert('', 'end', values=(sid, start_str, end_str, duration_str))
+            node = self.uncategorized_tree.insert('', 'end', values=(sid, start_str, end_str, duration_str))
+            if selected_id is not None and sid == selected_id:
+                self.uncategorized_tree.selection_set(node)
     
     def categorize_selected(self):
         selection = self.uncategorized_tree.selection()
