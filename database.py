@@ -164,6 +164,32 @@ class Database:
         sessions = cursor.fetchall()
         conn.close()
         return sessions
+
+    def get_sessions_by_type(self, session_type=None, start_date=None, end_date=None):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        query = 'SELECT id, start_time, end_time, session_type, duration_seconds, category FROM activity_sessions WHERE 1=1'
+        params = []
+
+        if session_type:
+            query += ' AND session_type = ?'
+            params.append(session_type)
+
+        if start_date:
+            query += ' AND start_time >= ?'
+            params.append(start_date)
+
+        if end_date:
+            query += ' AND start_time <= ?'
+            params.append(end_date)
+
+        query += ' ORDER BY start_time DESC'
+
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+        return rows
     
     def get_statistics(self, start_date=None, end_date=None):
         conn = sqlite3.connect(self.db_path)
