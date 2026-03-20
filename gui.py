@@ -777,15 +777,22 @@ class ActivityTrackerGUI:
                 return
             width = canvas.winfo_width() or int(canvas['width']) or 520
             height = canvas.winfo_height() or int(canvas['height']) or 170
-            margin = 16
             base_y = height - 30
             max_val = max([daily_active.get(d, 0) + daily_idle.get(d, 0) for d in days] + [1])
             usable_height = base_y - 12
-            gap = 3
-            available = max(20, width - margin*2)
-            bar_width = int(available / max(1, len(days)) - gap)
-            bar_width = max(8, min(bar_width, 32))
-            x = margin
+
+            # Dimensionamento horizontal dinâmico para ocupar a largura disponível
+            total_width = max(80, width - 32)
+            n = len(days)
+            gap = 8
+            bar_width = (total_width - gap * (n - 1)) / n
+            if bar_width < 12:
+                bar_width = 12
+                gap = max(4, (total_width - bar_width * n) / max(1, n - 1))
+            bar_width = min(bar_width, 120)
+            used = n * bar_width + (n - 1) * gap
+            start_x = (width - used) / 2
+            x = start_x
             for day in days:
                 act = daily_active.get(day, 0)
                 idle_val = daily_idle.get(day, 0)
