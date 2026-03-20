@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 from datetime import datetime, timedelta
+import calendar
 import threading
 import math
 from monitor import ActivityMonitor
@@ -14,7 +15,7 @@ class ActivityTrackerGUI:
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Rastreador de Tempo de Atividade")
-        self.root.geometry("900x600")
+        self.root.geometry("1100x900")
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
         self.database = Database()
@@ -107,8 +108,30 @@ class ActivityTrackerGUI:
         notebook.add(cat_frame, text='Categorizar Pausas')
         
         info_label = ttk.Label(cat_frame, text="Categorize suas pausas não categorizadas:", font=('Arial', 10))
-        info_label.pack(pady=10)
-        
+        info_label.pack(pady=(10, 5))
+
+        # Filtros de período
+        filter_frame = ttk.Frame(cat_frame)
+        filter_frame.pack(fill='x', padx=10, pady=(0, 8))
+
+        ttk.Label(filter_frame, text="Início (AAAA-MM-DD):").grid(row=0, column=0, padx=4, pady=2, sticky='w')
+        self.cat_start_var = tk.StringVar()
+        cat_start_entry = ttk.Entry(filter_frame, textvariable=self.cat_start_var, width=14, validate='key')
+        cat_start_entry['validatecommand'] = (self.root.register(self.validate_date_input), '%P')
+        cat_start_entry.grid(row=0, column=1, padx=4, pady=2)
+        ttk.Button(filter_frame, text="📅", width=3, command=lambda: self.open_date_picker(self.cat_start_var)).grid(row=0, column=2, padx=2, pady=2)
+
+        ttk.Label(filter_frame, text="Fim (AAAA-MM-DD):").grid(row=0, column=3, padx=4, pady=2, sticky='w')
+        self.cat_end_var = tk.StringVar()
+        cat_end_entry = ttk.Entry(filter_frame, textvariable=self.cat_end_var, width=14, validate='key')
+        cat_end_entry['validatecommand'] = (self.root.register(self.validate_date_input), '%P')
+        cat_end_entry.grid(row=0, column=4, padx=4, pady=2)
+        ttk.Button(filter_frame, text="📅", width=3, command=lambda: self.open_date_picker(self.cat_end_var)).grid(row=0, column=5, padx=2, pady=2)
+
+        ttk.Button(filter_frame, text="Aplicar filtros", command=lambda: self.refresh_uncategorized(show_warning=True)).grid(row=0, column=6, padx=8, pady=2)
+        for col in range(7):
+            filter_frame.columnconfigure(col, weight=0)
+
         list_frame = ttk.LabelFrame(cat_frame, text="Pausas Não Categorizadas", padding=10)
         list_frame.pack(fill='both', expand=True, padx=10, pady=10)
         
@@ -124,8 +147,11 @@ class ActivityTrackerGUI:
         self.uncategorized_tree.column('Início', width=200)
         self.uncategorized_tree.column('Fim', width=200)
         self.uncategorized_tree.column('Duração', width=100)
-        
-        self.uncategorized_tree.pack(fill='both', expand=True, pady=5)
+
+        scroll = ttk.Scrollbar(list_frame, orient='vertical', command=self.uncategorized_tree.yview)
+        self.uncategorized_tree.configure(yscrollcommand=scroll.set)
+        self.uncategorized_tree.pack(side='left', fill='both', expand=True, pady=5)
+        scroll.pack(side='right', fill='y')
         
         cat_input_frame = ttk.Frame(cat_frame)
         cat_input_frame.pack(fill='x', padx=10, pady=10)
@@ -262,7 +288,7 @@ class ActivityTrackerGUI:
             if selected_id is not None and sid == selected_id:
                 self.recent_tree.selection_set(node)
 
-    def refresh_uncategorized(self):
+    def refresh_uncategorized(self, show_warning=False):
         selected_id = None
         sel = self.uncategorized_tree.selection()
         if sel:
@@ -273,20 +299,64 @@ class ActivityTrackerGUI:
         for item in self.uncategorized_tree.get_children():
             self.uncategorized_tree.delete(item)
 
-        uncategorized = self.database.get_uncategorized_breaks(limit=50)
+        # Filtros de período (somente início/fim)
+        start_str = self.cat_start_var.get().strip()
+        end_str = self.cat_end_var.get().strip()
+
+        def parse_date(val):
+            if not val:
+                return None
+            try:
+                return datetime.strptime(val, '%Y-%m-%d')
+            except ValueError:
+                if show_warning:
+                    messagebox.showwarning("Data inválida", "Use o formato AAAA-MM-DD.")
+                    return "INVALID"
+                return None
+
+        start_dt = end_dt = None
+        if start_str:
+            dt = parse_date(start_str)
+            if dt == "INVALID":
+                return
+            start_dt = dt
+        if end_str:
+            dt = parse_date(end_str)
+            if dt == "INVALID":
+                return
+            end_dt = dt
+
+        # Se só início preenchido, usar aquele dia inteiro
+        if start_dt and not end_dt:
+            end_dt = start_dt
+
+        # Inclusivo: adicionar fim do dia
+        if end_dt:
+            end_dt = end_dt + timedelta(days=1) - timedelta(milliseconds=1)
+
+        # Quando há filtros, não limitar resultados; sem filtros, manter limite padrão
+        limit = None if (start_str or end_str) else 50
+
+        def fmt_db(dt_obj):
+            return dt_obj.strftime('%Y-%m-%d %H:%M:%S') if dt_obj else None
+
+        start_db = fmt_db(start_dt)
+        end_db = fmt_db(end_dt)
+
+        uncategorized = self.database.get_uncategorized_breaks(limit=limit, start_date=start_db, end_date=end_db)
 
         for item in uncategorized:
             sid, start, end, duration = item
 
-            start_str = datetime.fromisoformat(start).strftime('%d/%m/%Y %H:%M:%S')
-            end_str = datetime.fromisoformat(end).strftime('%d/%m/%Y %H:%M:%S')
+            start_str_fmt = datetime.fromisoformat(start).strftime('%d/%m/%Y %H:%M:%S')
+            end_str_fmt = datetime.fromisoformat(end).strftime('%d/%m/%Y %H:%M:%S')
 
             hours = duration // 3600
             minutes = (duration % 3600) // 60
             seconds = duration % 60
             duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
-            node = self.uncategorized_tree.insert('', 'end', values=(sid, start_str, end_str, duration_str))
+            node = self.uncategorized_tree.insert('', 'end', values=(sid, start_str_fmt, end_str_fmt, duration_str))
             if selected_id is not None and sid == selected_id:
                 self.uncategorized_tree.selection_set(node)
 
@@ -398,8 +468,22 @@ class ActivityTrackerGUI:
         if not self.tooltip:
             self.tooltip = tk.Label(self.root, text=text, bg="#111827", fg="white", padx=6, pady=2, font=('Segoe UI', 9), relief='solid', bd=1)
         self.tooltip.config(text=text)
-        self.tooltip.place(x=self.root.winfo_pointerx() - self.root.winfo_rootx() + 12,
-                           y=self.root.winfo_pointery() - self.root.winfo_rooty() + 12)
+        # Posição básica à direita/abaixo do ponteiro
+        x = self.root.winfo_pointerx() - self.root.winfo_rootx() + 12
+        y = self.root.winfo_pointery() - self.root.winfo_rooty() + 12
+        self.tooltip.place(x=-1000, y=-1000)  # coloca fora para medir
+        self.tooltip.update_idletasks()
+        tw = self.tooltip.winfo_reqwidth()
+        th = self.tooltip.winfo_reqheight()
+        root_w = self.root.winfo_width()
+        root_h = self.root.winfo_height()
+        # Se ultrapassar a direita, coloca à esquerda do ponteiro
+        if x + tw > root_w:
+            x = max(0, self.root.winfo_pointerx() - self.root.winfo_rootx() - tw - 12)
+        # Se ultrapassar abaixo, sobe
+        if y + th > root_h:
+            y = max(0, self.root.winfo_pointery() - self.root.winfo_rooty() - th - 12)
+        self.tooltip.place(x=x, y=y)
 
     def hide_tooltip(self):
         if self.tooltip:
@@ -683,6 +767,61 @@ class ActivityTrackerGUI:
             current += timedelta(days=1)
         return days or 1
 
+    def open_date_picker(self, target_var):
+        # Simple month-view picker
+        top = tk.Toplevel(self.root)
+        top.title("Selecionar data")
+        top.grab_set()
+        top.resizable(False, False)
+
+        today = datetime.today()
+        sel_year = tk.IntVar(value=today.year)
+        sel_month = tk.IntVar(value=today.month)
+
+        def build_calendar(year, month):
+            for w in cal_frame.winfo_children():
+                w.destroy()
+            ttk.Label(cal_frame, text=f"{calendar.month_name[month]} {year}", font=('Segoe UI', 10, 'bold')).grid(row=0, column=0, columnspan=7, pady=(0,4))
+            days_hdr = ['S', 'T', 'Q', 'Q', 'S', 'S', 'D']
+            for i, d in enumerate(days_hdr):
+                ttk.Label(cal_frame, text=d, width=3, anchor='center').grid(row=1, column=i)
+            month_days = calendar.monthcalendar(year, month)
+            for r, week in enumerate(month_days, start=2):
+                for c, day in enumerate(week):
+                    if day == 0:
+                        ttk.Label(cal_frame, text="", width=3).grid(row=r, column=c)
+                    else:
+                        btn = ttk.Button(cal_frame, text=str(day), width=3,
+                                        command=lambda d=day: select_date(year, month, d))
+                        btn.grid(row=r, column=c, padx=1, pady=1)
+
+        def select_date(y, m, d):
+            target_var.set(f"{y:04d}-{m:02d}-{d:02d}")
+            top.destroy()
+
+        nav_frame = ttk.Frame(top, padding=6)
+        nav_frame.pack(fill='x')
+        ttk.Button(nav_frame, text="<", width=3, command=lambda: shift_month(-1)).pack(side='left')
+        ttk.Button(nav_frame, text=">", width=3, command=lambda: shift_month(1)).pack(side='right')
+
+        cal_frame = ttk.Frame(top, padding=6)
+        cal_frame.pack()
+
+        def shift_month(delta):
+            m = sel_month.get() + delta
+            y = sel_year.get()
+            if m < 1:
+                m = 12
+                y -= 1
+            elif m > 12:
+                m = 1
+                y += 1
+            sel_month.set(m)
+            sel_year.set(y)
+            build_calendar(y, m)
+
+        build_calendar(sel_year.get(), sel_month.get())
+
     def load_dashboard(self):
         # Coleta dados sem rodar quando janela não visível
         now = datetime.now()
@@ -759,7 +898,7 @@ class ActivityTrackerGUI:
             start = 0
             for label, value, tag in slices:
                 extent = (value / total) * 360
-                canvas.create_arc(10, 10, 140, 140, start=start, extent=extent, fill=tag, outline='', tags=('slice', tag))
+                canvas.create_arc(10, 10, 140, 140, start=start, extent=extent, fill=tag, outline='#111', width=0.5, tags=('slice', tag))
                 start += extent
             # Texto central do maior segmento
             if slices:
@@ -894,13 +1033,18 @@ class ActivityTrackerGUI:
             return totals
 
         cat_pal = ["#e63b3b", "#0ea36f", "#6366f1", "#f59e0b", "#06b6d4", "#9333ea", "#14b8a6", "#ef4444", "#84cc16"]
+
         def cat_slices(cat_totals):
             if not cat_totals:
                 return [("Sem dados", 1, '#e5e7eb')]
             items = sorted(cat_totals.items(), key=lambda x: x[1], reverse=True)
             slices = []
-            for idx, (name, secs) in enumerate(items):
-                color = cat_pal[idx % len(cat_pal)]
+            for i, (name, secs) in enumerate(items):
+                # Garantir cor visível para "Não categorizado"
+                if name.lower().startswith('não categorizado'):
+                    color = '#9ca3af'
+                else:
+                    color = cat_pal[i % len(cat_pal)]
                 slices.append((name, secs, color))
             return slices
 

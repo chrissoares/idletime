@@ -229,20 +229,35 @@ class Database:
         conn.close()
         return categories
     
-    def get_uncategorized_breaks(self, limit=10):
+    def get_uncategorized_breaks(self, limit=10, start_date=None, end_date=None):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
-        cursor.execute('''
+
+        query = '''
             SELECT id, start_time, end_time, duration_seconds
             FROM activity_sessions
-            WHERE session_type = 'idle' 
-            AND category IS NULL
-            AND end_time IS NOT NULL
-            ORDER BY start_time DESC
-            LIMIT ?
-        ''', (limit,))
-        
+            WHERE session_type = 'idle'
+              AND category IS NULL
+              AND end_time IS NOT NULL
+        '''
+        params = []
+
+        if start_date:
+            query += ' AND start_time >= ?'
+            params.append(start_date)
+
+        if end_date:
+            query += ' AND start_time <= ?'
+            params.append(end_date)
+
+        query += ' ORDER BY start_time DESC'
+
+        if limit:
+            query += ' LIMIT ?'
+            params.append(limit)
+
+        cursor.execute(query, params)
+
         breaks = cursor.fetchall()
         conn.close()
         return breaks
